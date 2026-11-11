@@ -1,6 +1,6 @@
-import glob
 import os
 import re
+from pathlib import Path
 
 import streamlit as st
 from langchain_community.document_loaders import PyPDFLoader
@@ -12,7 +12,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 st.set_page_config(page_title="Zyro HR Help Desk", page_icon="💼", layout="centered")
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = BASE_DIR / "data"
 LLM_MODEL = "openai/gpt-oss-120b"
 EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 
@@ -65,16 +66,26 @@ def get_api_key():
         return os.environ.get("GROQ_API_KEY")
 
 
+def find_pdfs():
+    """Look in data/ (including subfolders, any capitalization), then next to app.py."""
+    found = []
+    if DATA_DIR.exists():
+        found = [p for p in DATA_DIR.rglob("*") if p.is_file() and p.suffix.lower() == ".pdf"]
+    if not found:
+        found = [p for p in BASE_DIR.glob("*") if p.is_file() and p.suffix.lower() == ".pdf"]
+    return sorted(found)
+
+
 @st.cache_resource(show_spinner="Reading the HR policy documents...")
 def load_vectorstore():
-    pdfs = sorted(glob.glob(os.path.join(DATA_DIR, "*.pdf")))
+    pdfs = find_pdfs()
     if not pdfs:
         return None, 0
     docs = []
     for path in pdfs:
-        pages = PyPDFLoader(path).load()
+        pages = PyPDFLoader(str(path)).load()
         for page in pages:
-            page.metadata["source"] = os.path.basename(path)
+            page.metadata["source"] = path.name
         docs.extend(pages)
     chunks = RecursiveCharacterTextSplitter(
         chunk_size=800, chunk_overlap=150
@@ -145,6 +156,12 @@ if not api_key:
 store, n_pdfs = load_vectorstore()
 if store is None:
     st.error("No PDFs found. Put the HR policy PDFs in a 'data' folder next to app.py.")
+    with st.expander("Debug: what the app can see"):
+        st.write("App folder:", str(BASE_DIR))
+        st.write("Files next to app.py:", sorted(p.name for p in BASE_DIR.iterdir()))
+        st.write("data/ exists:", DATA_DIR.exists())
+        if DATA_DIR.exists():
+            st.write("Inside data/:", sorted(p.name for p in DATA_DIR.iterdir()))
     st.stop()
 
 llm = get_llm(api_key)
